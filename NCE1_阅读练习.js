@@ -11,7 +11,8 @@ const DATA = [{"id": "s01", "section": 1, "unit": 1, "unitName": "第一册阅�
   const storageKey = "new-concept-grammar-72-v1";
   let curUnit = 1;
   let curSec = DATA[0].id;
-  let state = { solved: {}, work: {}, stars: {}, vocab: {} };
+  let state = { solved: {}, work: {}, stars: {}, vocab: {}, highlights: {} };
+  let pendingHighlight = null;
 
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey) || "{}");
@@ -19,8 +20,9 @@ const DATA = [{"id": "s01", "section": 1, "unit": 1, "unitName": "第一册阅�
     state.work = saved.work || {};
     state.stars = saved.stars || {};
     state.vocab = saved.vocab || {};
+    state.highlights = saved.highlights || {};
   } catch (error) {
-    state = { solved: {}, work: {}, stars: {}, vocab: {} };
+    state = { solved: {}, work: {}, stars: {}, vocab: {}, highlights: {} };
   }
 
   function saveState() {
@@ -49,6 +51,139 @@ const DATA = [{"id": "s01", "section": 1, "unit": 1, "unitName": "第一册阅�
 
   function itemKey(groupIndex, itemIndex) {
     return `${groupIndex}-${itemIndex}`;
+  }
+
+  function highlightKey(sectionId, groupIndex) {
+    return `${sectionId}-${groupIndex}`;
+  }
+
+  function mergeHighlightRanges(ranges) {
+    return ranges
+      .filter((range) => Number.isInteger(range.start) && Number.isInteger(range.end) && range.end > range.start)
+      .sort((a, b) => a.start - b.start)
+      .reduce((merged, range) => {
+        const previous = merged[merged.length - 1];
+        if (previous && range.start <= previous.end) {
+          previous.end = Math.max(previous.end, range.end);
+        } else {
+          merged.push({ start: range.start, end: range.end });
+        }
+        return merged;
+      }, []);
+  }
+
+  function unwrapStudyHighlights(container) {
+    container.querySelectorAll("mark.study-highlight").forEach((mark) => {
+      mark.replaceWith(...mark.childNodes);
+    });
+    container.normalize();
+  }
+
+  function applyHighlights(container) {
+    const key = container.dataset.highlightKey;
+    unwrapStudyHighlights(container);
+    const ranges = mergeHighlightRanges(state.highlights[key] || []);
+    state.highlights[key] = ranges;
+    if (!ranges.length) return;
+
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    let offset = 0;
+    let node;
+    while ((node = walker.nextNode())) {
+      const length = node.nodeValue.length;
+      textNodes.push({ node, start: offset, end: offset + length });
+      offset += length;
+    }
+
+    textNodes.forEach((entry) => {
+      const segments = ranges
+        .map((range) => ({
+          start: Math.max(range.start, entry.start) - entry.start,
+          end: Math.min(range.end, entry.end) - entry.start,
+          rangeStart: range.start,
+          rangeEnd: range.end,
+        }))
+        .filter((segment) => segment.end > segment.start)
+        .sort((a, b) => b.start - a.start);
+
+      segments.forEach((segment) => {
+        entry.node.splitText(segment.end);
+        const selectedText = entry.node.splitText(segment.start);
+        const mark = document.createElement("mark");
+        mark.className = "study-highlight";
+        mark.dataset.highlightKey = key;
+        mark.dataset.highlightStart = String(segment.rangeStart);
+        mark.dataset.highlightEnd = String(segment.rangeEnd);
+        selectedText.replaceWith(mark);
+        mark.appendChild(selectedText);
+      });
+    });
+  }
+
+  function restoreHighlights() {
+    $("main").querySelectorAll(".highlightable-passage").forEach(applyHighlights);
+  }
+
+  function captureHighlightSelection() {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+    const range = selection.getRangeAt(0);
+    const ancestor = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+      ? range.commonAncestorContainer
+      : range.commonAncestorContainer.parentElement;
+    const container = ancestor && ancestor.closest(".highlightable-passage");
+    if (!container || !container.contains(range.startContainer) || !container.contains(range.endContainer)) return;
+
+    const before = document.createRange();
+    before.selectNodeContents(container);
+    before.setEnd(range.startContainer, range.startOffset);
+    const start = before.toString().length;
+    const end = start + range.toString().length;
+    if (end <= start) return;
+
+    pendingHighlight = { key: container.dataset.highlightKey, start, end };
+    $("main").querySelectorAll("[data-highlight-add]").forEach((button) => {
+      const selectedHere = button.dataset.highlightAdd === pendingHighlight.key;
+      button.disabled = !selectedHere;
+      button.textContent = selectedHere ? "🖍️ 高亮选中内容" : "先选择原文";
+    });
+  }
+
+  function addPendingHighlight(key) {
+    if (!pendingHighlight || pendingHighlight.key !== key) return;
+    const ranges = state.highlights[key] || [];
+    ranges.push({ start: pendingHighlight.start, end: pendingHighlight.end });
+    state.highlights[key] = mergeHighlightRanges(ranges);
+    saveState();
+    const container = $("main").querySelector(`.highlightable-passage[data-highlight-key="${key}"]`);
+    if (container) applyHighlights(container);
+    pendingHighlight = null;
+    window.getSelection()?.removeAllRanges();
+    const button = $("main").querySelector(`[data-highlight-add="${key}"]`);
+    if (button) {
+      button.disabled = true;
+      button.textContent = "先选择原文";
+    }
+  }
+
+  function undoLastHighlight(key) {
+    const ranges = state.highlights[key] || [];
+    if (!ranges.length) return;
+    ranges.pop();
+    state.highlights[key] = ranges;
+    saveState();
+    const container = $("main").querySelector(`.highlightable-passage[data-highlight-key="${key}"]`);
+    if (container) applyHighlights(container);
+  }
+
+  function clearPassageHighlights(key) {
+    if (!(state.highlights[key] || []).length) return;
+    if (!confirm("确定要清除这篇原文的全部高亮吗？")) return;
+    state.highlights[key] = [];
+    saveState();
+    const container = $("main").querySelector(`.highlightable-passage[data-highlight-key="${key}"]`);
+    if (container) applyHighlights(container);
   }
 
   function speak(text) {}
@@ -195,6 +330,7 @@ const DATA = [{"id": "s01", "section": 1, "unit": 1, "unitName": "第一册阅�
        instruction = match[1];
        preamble = preamble.replace(match[1], "");
     }
+    const passageHighlightKey = highlightKey(section.id, groupIndex);
 
     return `<section class="exercise-section" style="border-top: 1px solid var(--line); margin-top: 24px; padding-top: 16px;">
       <div class="group-top">
@@ -202,7 +338,15 @@ const DATA = [{"id": "s01", "section": 1, "unit": 1, "unitName": "第一册阅�
         <span class="count-badge">约 ${group.questionCount} 题</span>
       </div>
       <div style="display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start;">
-        ${preamble.trim() ? `<div class="source-content split-left" style="flex: 1; min-width: 300px; position: sticky; top: 110px; max-height: calc(100vh - 130px); overflow-y: auto; scrollbar-width: thin; ${style}">${preamble}</div>` : ""}
+        ${preamble.trim() ? `<div class="split-left" style="flex: 1; min-width: 300px; position: sticky; top: 110px; max-height: calc(100vh - 130px); overflow-y: auto; scrollbar-width: thin; ${style}">
+          <div class="highlight-toolbar">
+            <span class="highlight-hint">拖动选择原文，再点高亮；高亮会自动保存</span>
+            <button class="highlight-btn" type="button" data-highlight-add="${passageHighlightKey}" disabled>先选择原文</button>
+            <button class="highlight-btn highlight-clear-btn" type="button" data-highlight-undo="${passageHighlightKey}">撤销一次</button>
+            <button class="highlight-btn highlight-clear-btn" type="button" data-highlight-clear="${passageHighlightKey}">清除本篇</button>
+          </div>
+          <div class="source-content highlightable-passage" data-highlight-key="${passageHighlightKey}">${preamble}</div>
+        </div>` : ""}
         <div class="split-right" style="flex: 1.2; min-width: 350px; background: #fff; max-height: calc(100vh - 130px); overflow-y: auto; scrollbar-width: thin; padding-right: 12px;">
           ${instruction ? `<div class="source-content" style="margin-bottom: 12px; color: var(--ink2); font-weight: 600;">${instruction.replace('<p class="source-line">', '').replace('</p>', '')}</div>` : ""}
           ${items}
@@ -388,6 +532,15 @@ const DATA = [{"id": "s01", "section": 1, "unit": 1, "unitName": "第一册阅�
          toggleStar(secId, key);
       }));
     $("main")
+      .querySelectorAll("[data-highlight-add]")
+      .forEach((button) => (button.onclick = () => addPendingHighlight(button.dataset.highlightAdd)));
+    $("main")
+      .querySelectorAll("[data-highlight-clear]")
+      .forEach((button) => (button.onclick = () => clearPassageHighlights(button.dataset.highlightClear)));
+    $("main")
+      .querySelectorAll("[data-highlight-undo]")
+      .forEach((button) => (button.onclick = () => undoLastHighlight(button.dataset.highlightUndo)));
+    $("main")
       .querySelectorAll("[data-input]")
       .forEach((input) => {
         input.addEventListener("input", () => {
@@ -420,6 +573,7 @@ const DATA = [{"id": "s01", "section": 1, "unit": 1, "unitName": "第一册阅�
           saveState();
         });
       });
+    restoreHighlights();
   }
 
   function render() {
@@ -945,6 +1099,18 @@ th{background:#EEF2FB}.lesson-figure img{max-width:100%;height:auto}.spk{display
     script.id = callbackName;
     script.src = `https://dict.youdao.com/suggest?num=1&doctype=json&q=${encodeURIComponent(word)}&callback=${callbackName}`;
     document.body.appendChild(script);
+  });
+
+  document.body.addEventListener("mouseup", (event) => {
+    if (event.target.closest(".highlightable-passage")) {
+      window.setTimeout(captureHighlightSelection, 0);
+    }
+  });
+
+  document.body.addEventListener("touchend", (event) => {
+    if (event.target.closest(".highlightable-passage")) {
+      window.setTimeout(captureHighlightSelection, 0);
+    }
   });
 
   render();

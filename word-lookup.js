@@ -2,8 +2,7 @@
   "use strict";
 
   const STYLE_ID = "nce-word-lookup-style";
-  // Trigger before mobile Safari/Chrome normally opens its native long-press menu.
-  const LONG_PRESS_MS = 450;
+  const LONG_PRESS_MS = 620;
   const MOVE_TOLERANCE = 14;
 
   function installStyles() {
@@ -11,7 +10,7 @@
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = `
-      .nce-lookup-surface,.nce-lookup-surface *{-webkit-touch-callout:none}
+      .nce-lookup-surface{-webkit-touch-callout:none}
       .nce-word-popover{position:fixed;z-index:10000;width:min(320px,calc(100vw - 24px));padding:15px;border:1px solid #dfe5ef;border-radius:14px;background:#fff;color:#263249;box-shadow:0 14px 40px rgba(38,50,73,.2);font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;line-height:1.45}
       .nce-word-popover__head{display:flex;align-items:center;gap:10px}
       .nce-word-popover__word{min-width:0;flex:1;color:#4169dc;font-size:18px;font-weight:800;overflow-wrap:anywhere}
@@ -21,13 +20,7 @@
       .nce-word-popover__action.saved{background:#edf9f3;color:#168052}
       .nce-word-popover__action:disabled{cursor:default}
       .nce-lookup-highlight{border-radius:3px;background:#fff0a8}
-      @media (hover:none) and (pointer:coarse){
-        .nce-lookup-surface,.nce-lookup-surface *{-webkit-user-select:none;user-select:none}
-        .nce-lookup-surface input,.nce-lookup-surface textarea{-webkit-user-select:text;user-select:text}
-        .nce-word-popover{padding:17px}
-        .nce-word-popover__close{width:42px;height:42px}
-        .nce-word-popover__action{min-height:48px;font-size:15px}
-      }
+      @media (pointer:coarse){.nce-word-popover{padding:17px}.nce-word-popover__close{width:42px;height:42px}.nce-word-popover__action{min-height:48px;font-size:15px}}
     `;
     document.head.appendChild(style);
   }
@@ -179,11 +172,9 @@
     }, { passive: true });
     surface.addEventListener("pointerup", cancelPress, { passive: true });
     surface.addEventListener("pointercancel", cancelPress, { passive: true });
-    // Prevent the browser dictionary/copy menu inside study text. Interactive
-    // controls are excluded so their normal behavior remains available.
     surface.addEventListener("contextmenu", (event) => {
-      if (eligible(event.target)) event.preventDefault();
-    }, { capture: true });
+      if (Date.now() < suppressContextMenuUntil) event.preventDefault();
+    });
     surface.addEventListener("dblclick", () => {
       const found = selectionWord();
       if (found) show(found);

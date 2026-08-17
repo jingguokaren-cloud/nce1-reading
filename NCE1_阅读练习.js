@@ -46,7 +46,8 @@ const DATA = [{"id": "s01", "section": 1, "unit": 1, "unitName": "第一册阅�
   }
   async function initializeCloudSync() {
     try {
-      const { createCloudSync } = await import("./cloud-sync.js?v=20260804-cloudbase");
+      const createCloudSync = window.NCECloudSync && window.NCECloudSync.createCloudSync;
+      if (typeof createCloudSync !== "function") throw new Error("云同步组件未加载");
       cloudSync = await createCloudSync({ appId: "nce1-reading", storageKey: storageKeyPrefix, getState: () => ({ ...state, lastSection: curSec }), applyState: applyCloudState, getSummary: progressSummary, onAuthenticated: activateStudentStorage, onSignedOut: deactivateStudentStorage });
     } catch (error) { console.error("CloudBase 初始化失败", error); }
   }

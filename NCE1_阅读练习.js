@@ -574,7 +574,16 @@ const DATA = [{"id": "s01", "section": 1, "unit": 1, "unitName": "第一册阅�
           saveState();
         });
         input.addEventListener("keydown", (event) => {
-          if (event.key === "Enter") checkInput(input.dataset.input);
+          const keyCode = event.keyCode || event.which;
+          if (
+            event.key === "Enter" ||
+            event.code === "Enter" ||
+            event.code === "NumpadEnter" ||
+            keyCode === 13
+          ) {
+            event.preventDefault();
+            checkInput(input.dataset.input);
+          }
         });
       });
     $("main")

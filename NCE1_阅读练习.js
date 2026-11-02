@@ -13,14 +13,13 @@ const DATA = [{"id": "s01", "section": 1, "unit": 1, "unitName": "第一册阅�
   let curSec = DATA[0].id;
   let state = { solved: {}, work: {}, stars: {}, vocab: {}, highlights: {}, updatedAt: 0 };
   let activeStorageKey = "";
-  let cloudSync = null;
   let pendingHighlight = null;
 
   function emptyState() { return { solved: {}, work: {}, stars: {}, vocab: {}, highlights: {}, updatedAt: 0 }; }
   function normalizeState(saved = {}) {
     return { solved: saved.solved || {}, work: saved.work || {}, stars: saved.stars || {}, vocab: saved.vocab || {}, highlights: saved.highlights || {}, updatedAt: Number(saved.updatedAt) || Date.now() };
   }
-  function saveState({ skipCloud = false, preserveTimestamp = false } = {}) {
+  function saveState({ preserveTimestamp = false } = {}) {
     if (!preserveTimestamp) state.updatedAt = Date.now();
     state.lastSection = curSec;
     try {
@@ -28,30 +27,28 @@ const DATA = [{"id": "s01", "section": 1, "unit": 1, "unitName": "第一册阅�
     } catch (error) {
       // Local files or privacy settings may block storage; the page still works in-memory.
     }
-    if (!skipCloud && cloudSync) cloudSync.queueSync();
   }
-  function activateStudentStorage(identity) {
-    const keyPart = String(identity.userId || identity.username || "").trim().toLowerCase().replace(/[^a-z0-9_.:-]/g, "-");
-    activeStorageKey = keyPart ? `${storageKeyPrefix}:${keyPart}` : "";
-    try { state = activeStorageKey ? normalizeState(JSON.parse(localStorage.getItem(activeStorageKey) || "{}")) : emptyState(); } catch { state = emptyState(); }
+  function migrateLegacyProgress(){
+    try{
+      if(localStorage.getItem(storageKeyPrefix)!==null)return;
+      let bestKey="",bestAt=-1;
+      for(let index=0;index<localStorage.length;index+=1){
+        const key=localStorage.key(index)||"";
+        if(key.indexOf(storageKeyPrefix+":")!==0)continue;
+        let at=0;
+        try{at=Number(JSON.parse(localStorage.getItem(key)||"{}").updatedAt)||0}catch{at=0}
+        if(at>bestAt){bestAt=at;bestKey=key}
+      }
+      if(bestKey)localStorage.setItem(storageKeyPrefix,localStorage.getItem(bestKey)||"{}");
+    }catch{}
+  }
+  function activateLocalStorage() {
+  migrateLegacyProgress();
+    activeStorageKey = storageKeyPrefix;
+    try { state = normalizeState(JSON.parse(localStorage.getItem(activeStorageKey) || "{}")); } catch { state = emptyState(); }
     curSec = state.lastSection && DATA.some((section) => section.id === state.lastSection) ? state.lastSection : (curSec || DATA[0].id);
     render();
   }
-  function deactivateStudentStorage() { activeStorageKey = ""; state = emptyState(); curUnit = 1; curSec = DATA[0].id; render(); }
-  function applyCloudState(nextState) { state = normalizeState(nextState); curSec = state.lastSection && DATA.some((section) => section.id === state.lastSection) ? state.lastSection : DATA[0].id; saveState({ skipCloud: true, preserveTimestamp: true }); render(); }
-  function progressSummary() {
-    const completedItems = Object.values(state.solved).reduce((sum, values) => sum + new Set(values || []).size, 0);
-    const starredItems = Object.values(state.stars).reduce((sum, values) => sum + new Set(values || []).size, 0);
-    return { completedItems, totalItems: DATA.reduce((sum, section) => sum + totalOf(section), 0), starredItems, lastSection: curSec };
-  }
-  async function initializeCloudSync() {
-    try {
-      const createCloudSync = window.NCECloudSync && window.NCECloudSync.createCloudSync;
-      if (typeof createCloudSync !== "function") throw new Error("云同步组件未加载");
-      cloudSync = await createCloudSync({ appId: "nce1-reading", storageKey: storageKeyPrefix, getState: () => ({ ...state, lastSection: curSec }), applyState: applyCloudState, getSummary: progressSummary, onAuthenticated: activateStudentStorage, onSignedOut: deactivateStudentStorage });
-    } catch (error) { console.error("CloudBase 初始化失败", error); }
-  }
-
   function solvedSet(id) {
     return new Set(state.solved[id] || []);
   }
@@ -1142,5 +1139,5 @@ th{background:#EEF2FB}.lesson-figure img{max-width:100%;height:auto}.spk{display
   });
 
   render();
-  initializeCloudSync();
+  activateLocalStorage();
 })();
